@@ -46,3 +46,4 @@ httpx==0.23.0
 onnxruntime-gpu
 torchcrepe==0.0.20
 wget
+customtkinter==5.2.0
