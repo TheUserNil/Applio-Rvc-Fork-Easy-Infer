@@ -10,16 +10,17 @@ import numpy as np
 import torch
 import threading
 import soundfile as sf
-from config import Config
+from assets.configs.config import Config
 from fairseq import checkpoint_utils
-from infer_pack.models import (
-    SynthesizerTrnMs256NSFsid,
-    SynthesizerTrnMs256NSFsid_nono,
-    SynthesizerTrnMs768NSFsid,
-    SynthesizerTrnMs768NSFsid_nono,
-)
-from my_utils import load_audio
-from vc_infer_pipeline import VC
+from lib.infer.infer_libs.audio import load_audio
+from lib.infer.modules.vc.modules import VC
+from dotenv import load_dotenv
+load_dotenv()
+config = Config()
+vc = VC(config)
+
+from lib.infer.modules.vc.utils import *
+import lib.globals.globals as rvc_globals
 import wget
  
 now_dir = os.getcwd()
@@ -32,10 +33,10 @@ os.environ["TEMP"] = tmp
 warnings.filterwarnings("ignore")
 torch.manual_seed(114514)
 
-config = Config()
+
 hubert_model = None
 
-if not os.path.exists("hubert_base.pt"):
+if not os.path.exists(os.path.join(now_dir, "assets", "hubert", "hubert_base.pt")):
     print("Descargando modelo base...")
     try:
         wget.download(url="https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt")
@@ -43,243 +44,15 @@ if not os.path.exists("hubert_base.pt"):
         print("Hubo un error descargando el modelo, intenta descargarlo manualmente y ponerlo dentro del folder del programa.")
         print("https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt")
 
-def load_hubert():
-    global hubert_model
-    models, _, _ = checkpoint_utils.load_model_ensemble_and_task(
-        ["hubert_base.pt"],
-        suffix="",
-    )
-    hubert_model = models[0]
-    hubert_model = hubert_model.to(config.device)
-    if config.is_half:
-        hubert_model = hubert_model.half()
-    else:
-        hubert_model = hubert_model.float()
-    hubert_model.eval()
 
-#vc_single(0, input_audio, f0_pitch, None, f0_method, file_index, index_rate,crepe_hop_length, output_file)
-def vc_single(
-    sid = 0,
-    input_audio_path = None,
-    f0_up_key = None,
-    f0_file = None,
-    f0_method = None,
-    file_index = None,
-    index_rate = None,
-    resample_sr = 0, 
-    rms_mix_rate = 1, 
-    protect = 0.33,
-    crepe_hop_length = None,
-    output_path = None,
-):  # spk_item, input_audio0, vc_transform0,f0_file,f0method0
-    global tgt_sr, net_g, vc, hubert_model, version
-    
-    filter_radius = 3
-    if input_audio_path is None:
-        return "Necesitas cargar un audio", None
-    
-    f0_up_key = int(f0_up_key)
+if not os.path.exists(os.path.join(now_dir, "assets", "rmvpe", "rmvpe.pt")):
+    print("Descargando modelo rmvpe...")
     try:
-        print(f"Cargando audio: {input_audio_path}")
-        audio = load_audio(input_audio_path, 16000)
-        audio_max = np.abs(audio).max() / 0.95
-        
-        if audio_max > 1:
-            audio /= audio_max
-            
-        times = [0, 0, 0]
-        if not hubert_model:
-            load_hubert()
-        if_f0 = cpt.get("f0", 1)
-        
-        file_index = (
-            file_index.strip(" ")
-            .strip('"')
-            .strip("\n")
-            .strip('"')
-            .strip(" ")
-            .replace("trained", "added")
-        ) 
-        if tgt_sr != resample_sr >= 16000:
-            tgt_sr = resample_sr
-            
-        audio_opt = vc.pipeline(
-            hubert_model,
-            net_g,
-            sid,
-            audio,
-            input_audio_path,
-            times,
-            f0_up_key,
-            f0_method,
-            file_index,
-            index_rate,
-            if_f0,
-            filter_radius,
-            tgt_sr,
-            resample_sr,
-            rms_mix_rate,
-            version,
-            protect,
-            crepe_hop_length,
-            f0_file=f0_file,
-        )
-        
-        print(
-            "npy: ", times[0], "s, f0: ", times[1], "s, infer: ", times[2], "s", sep=""
-        )
-        
-        if output_path is not None:
-            sf.write(output_path, audio_opt, tgt_sr, format='WAV')
-
-        return "Correcto", (tgt_sr, audio_opt)
-    
+        wget.download(url="https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt")
     except:
-        info = traceback.format_exc()
-        print(info)
-        return info, (None, None)
+        print("Hubo un error descargando el modelo, intenta descargarlo manualmente y ponerlo dentro del folder del programa.")
+        print("https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/rmvpe.pt")
 
-
-def vc_multi(
-    sid,
-    dir_path,
-    opt_root,
-    paths,
-    f0_up_key,
-    f0_method,
-    file_index,
-    file_index2,
-    # file_big_npy,
-    index_rate,
-    filter_radius,
-    resample_sr,
-    rms_mix_rate,
-    protect,
-    format1,
-    crepe_hop_length,
-):
-    try:
-        dir_path = (
-            dir_path.strip(" ").strip('"').strip("\n").strip('"').strip(" ")
-        )  # 防止小白拷路径头尾带了空格和"和回车
-        opt_root = opt_root.strip(" ").strip('"').strip("\n").strip('"').strip(" ")
-        os.makedirs(opt_root, exist_ok=True)
-        try:
-            if dir_path != "":
-                paths = [os.path.join(dir_path, name) for name in os.listdir(dir_path)]
-            else:
-                paths = [path.name for path in paths]
-        except:
-            traceback.print_exc()
-            paths = [path.name for path in paths]
-        infos = []
-        for path in paths:
-            info, opt = vc_single(
-                sid,
-                path,
-                f0_up_key,
-                None,
-                f0_method,
-                file_index,
-                file_index2,
-                # file_big_npy,
-                index_rate,
-                filter_radius,
-                resample_sr,
-                rms_mix_rate,
-                protect,
-                crepe_hop_length
-            )
-            if "Success" in info:
-                try:
-                    tgt_sr, audio_opt = opt
-                    if format1 in ["wav", "flac"]:
-                        sf.write(
-                            "%s/%s.%s" % (opt_root, os.path.basename(path), format1),
-                            audio_opt,
-                            tgt_sr,
-                        )
-                    else:
-                        path = "%s/%s.wav" % (opt_root, os.path.basename(path))
-                        sf.write(
-                            path,
-                            audio_opt,
-                            tgt_sr,
-                        )
-                        if os.path.exists(path):
-                            os.system(
-                                "ffmpeg -i %s -vn %s -q:a 2 -y"
-                                % (path, path[:-4] + ".%s" % format1)
-                            )
-                except:
-                    info += traceback.format_exc()
-            infos.append("%s->%s" % (os.path.basename(path), info))
-            yield "\n".join(infos)
-        yield "\n".join(infos)
-    except:
-        yield traceback.format_exc()
-
-
-# 一个选项卡全局只能有一个音色
-def get_vc(weight_root, sid):
-    global n_spk, tgt_sr, net_g, vc, cpt, version
-    if sid == "" or sid == []:
-        global hubert_model
-        if hubert_model is not None:  # 考虑到轮询, 需要加个判断看是否 sid 是由有模型切换到无模型的
-            print("clean_empty_cache")
-            del net_g, n_spk, vc, hubert_model, tgt_sr  # ,cpt
-            hubert_model = net_g = n_spk = vc = hubert_model = tgt_sr = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            ###楼下不这么折腾清理不干净
-            if_f0 = cpt.get("f0", 1)
-            version = cpt.get("version", "v1")
-            if version == "v1":
-                if if_f0 == 1:
-                    net_g = SynthesizerTrnMs256NSFsid(
-                        *cpt["config"], is_half=config.is_half
-                    )
-                else:
-                    net_g = SynthesizerTrnMs256NSFsid_nono(*cpt["config"])
-            elif version == "v2":
-                if if_f0 == 1:
-                    net_g = SynthesizerTrnMs768NSFsid(
-                        *cpt["config"], is_half=config.is_half
-                    )
-                else:
-                    net_g = SynthesizerTrnMs768NSFsid_nono(*cpt["config"])
-            del net_g, cpt
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            cpt = None
-        return {"visible": False, "__type__": "update"}
-    person = (weight_root)
-    print("loading %s" % person)
-    cpt = torch.load(person, map_location="cpu")
-    tgt_sr = cpt["config"][-1]
-    cpt["config"][-3] = cpt["weight"]["emb_g.weight"].shape[0]  # n_spk
-    if_f0 = cpt.get("f0", 1)
-    
-    version = cpt.get("version", "v1")
-    if version == "v1":
-        if if_f0 == 1:
-            net_g = SynthesizerTrnMs256NSFsid(*cpt["config"], is_half=config.is_half)
-        else:
-            net_g = SynthesizerTrnMs256NSFsid_nono(*cpt["config"])
-    elif version == "v2":
-        if if_f0 == 1:
-            net_g = SynthesizerTrnMs768NSFsid(*cpt["config"], is_half=config.is_half)
-        else:
-            net_g = SynthesizerTrnMs768NSFsid_nono(*cpt["config"])
-    del net_g.enc_q
-    print(net_g.load_state_dict(cpt["weight"], strict=False))
-    net_g.eval().to(config.device)
-    if config.is_half:
-        net_g = net_g.half()
-    else:
-        net_g = net_g.float()
-    vc = VC(tgt_sr, config)
-    n_spk = cpt["config"][-3]
 
 
 class App(ctk.CTk):
@@ -294,8 +67,8 @@ class App(ctk.CTk):
         #ctk.set_default_color_theme("")
         self.model_loaded = False
         
-        self.logo = ctk.CTkImage(Image.open("assets/logo.png"), size=(40, 40))
-        self.image_button = ctk.CTkButton(master=self, text="IA Hispano RVC EASY GUI", image=self.logo)
+        self.logo = ctk.CTkImage(Image.open("assets/images/icon.png"), size=(40, 40))
+        self.image_button = ctk.CTkButton(master=self, text="Applio Rvc Fork EASY GUI", image=self.logo)
         self.image_button.pack()
         
         self.master_frame = ctk.CTkFrame(master=self, height=self.winfo_height() - 20, width=self.winfo_width() - 20)
@@ -318,6 +91,8 @@ class App(ctk.CTk):
         
         self.select_model = ctk.StringVar(value="Seleccion un modelo")
         self.models_dir = models_dir
+
+        #self.checkbox.place(x=40, y=70)
         
         self.model_folders = [f for f in os.listdir(models_dir) if os.path.isdir(os.path.join(
             models_dir, f)) and any(f.endswith(".pth") for f in os.listdir(os.path.join(models_dir, f)))]
@@ -343,7 +118,7 @@ class App(ctk.CTk):
         #["pm", "harvest", "dio", "crepe", "crepe-tiny", "mangio-crepe", "mangio-crepe-tiny"]
         self.f0_method_entry = ctk.CTkSegmentedButton(
             self.pitch_frame, height=40, 
-            values=["dio", "pm","harvest", "crepe", "crepe-tiny", "mangio-crepe" , "mangio-crepe-tiny"], 
+            values=["dio", "pm","harvest", "crepe", "crepe-tiny", "mangio-crepe" , "mangio-crepe-tiny", "rmvpe"], 
             command=self.crepe_hop_length_slider_visibility
         )
         self.f0_method_entry.set("dio")
@@ -485,7 +260,7 @@ class App(ctk.CTk):
 
         if "pth_file_path" in globals():
             load_hubert()
-            get_vc(pth_file_path, 0)
+            vc.get_vc(pth_file_path, 0)
 
 
     def extract_model_from_zip(self, zip_path, output_dir):
@@ -556,7 +331,7 @@ class App(ctk.CTk):
                     print(f"Conjunto incompleto de archivos .index encontrados en {model_dir}")
             else:
                 print(f"No se encontró un archivo .index en {model_dir}")
-            get_vc(pth_file_path, 0)
+            vc.get_vc(pth_file_path, 0.33, 0.33)
             
             self.model_loaded = True
         else:
@@ -570,7 +345,7 @@ class App(ctk.CTk):
         
     # Oculta el slider de crepe hop length si no se selecciona crepe
     def crepe_hop_length_slider_visibility(self, value):
-        if value in ["crepe","crepe-tiny","mangio-crepe","mangio-crepe-tiny"]:
+        if value in ["crepe","crepe-tiny","mangio-crepe","mangio-crepe-tiny", "rmvpe"]:
             self.crepe_hop_length_label.grid(row=2, column=0, padx=10, pady=5, )
             self.crepe_hop_length_entry.grid(row=2, column=1, padx=10, pady=5, )
         else:
@@ -611,8 +386,13 @@ class App(ctk.CTk):
         self.output_audio_frame.pack_forget()
         self.result_state.pack_forget()
         self.run_button.configure(state="disabled")
-
+        # Variables temps
+        minpitch_slider = 50
+        minpitch_txtbox = 50
+        maxpitch_slider = 1100
+        maxpitch_txtbox = 1100
         # Get values from user input widgets
+        autotune = False
         sid = self.sid_entry.get()
         input_audio = self.input_audio_entry.get()
         f0_pitch = round(self.f0_pitch_entry.get())
@@ -623,9 +403,9 @@ class App(ctk.CTk):
         # file_big_npy = file_big_npy_entry.get()
         index_rate = round(self.index_rate_entry.get(),2)
         
-        file_path = os.path.join(now_dir ,"audios", os.path.basename(input_audio))
+        file_path = os.path.join(now_dir , "assets", "audios", os.path.basename(input_audio))
         new_file = self.get_output_path(file_path)
-        output_file =  os.path.join(now_dir ,"audios", os.path.basename(new_file))
+        output_file =  os.path.join(now_dir , "assets", "audio-outputs", os.path.basename(new_file))
         
         print("sid: ", sid, "input_audio: ", input_audio, "f0_pitch: ", f0_pitch, "f0_file: ", f0_file, "f0_method: ", f0_method,
             "file_index: ", file_index, "file_big_npy: ", "index_rate: ", index_rate, "output_file: ", output_file)
@@ -635,10 +415,15 @@ class App(ctk.CTk):
                 self.loading_frame.pack(padx=10, pady=10)
                 self.loading_progress.start()
                 
-                result, audio_opt = vc_single(
-                    sid = 0,  input_audio_path = input_audio, 
-                    f0_up_key = f0_pitch, f0_file = None, f0_method = f0_method, 
-                    file_index = file_index, index_rate = index_rate, crepe_hop_length = crepe_hop_length, output_path = output_file)
+                result, audio_opt = vc.vc_single(
+                    sid = 0,  input_audio_path1 = input_audio, 
+                    f0_up_key = f0_pitch, f0_file = None, f0_method = f0_method, file_index2 = file_index,
+                    file_index = file_index, index_rate = index_rate, filter_radius=3 ,resample_sr=0, protect=0.33, rms_mix_rate =1, crepe_hop_length = crepe_hop_length, output_path = output_file,
+                    f0_min= minpitch_slider,
+                    note_min= minpitch_txtbox,
+                    f0_max= maxpitch_slider,
+                    note_max= maxpitch_txtbox,
+                    f0_autotune= autotune)
                 
                 # output_label.configure(text=result + "\n saved at" + output_file)
                 print(os.path.join(output_file))
@@ -675,12 +460,12 @@ class App(ctk.CTk):
     def open_file_explorer(self):
         """Opens the File Explorer in the specified folder."""
         
-        os.startfile(os.path.join(now_dir ,"audios"))
+        os.startfile(os.path.join(now_dir , "assets" ,"audio-outputs"))
         
   #  print(value)
   
 app = App()
-app.title("RVC - Uso Local - IA Hispano")
+app.title("RVC - Uso Local - Applio Rvc Fork")
 
 width = 800
 height = 800
