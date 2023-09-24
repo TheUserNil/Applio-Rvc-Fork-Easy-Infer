@@ -62,6 +62,21 @@ class VC:
     def get_vc(self, sid, *to_return_protect):
         logger.info("Get sid: " + sid)
 
+        to_return_protect0 = {
+            "visible": self.if_f0 != 0,
+            "value": to_return_protect[0]
+            if self.if_f0 != 0 and to_return_protect
+            else 0.5,
+            "__type__": "update",
+        }
+        to_return_protect1 = {
+            "visible": self.if_f0 != 0,
+            "value": to_return_protect[1]
+            if self.if_f0 != 0 and to_return_protect
+            else 0.33,
+            "__type__": "update",
+        }
+
         if not sid:
             if self.hubert_model is not None:  # 考虑到轮询, 需要加个判断看是否 sid 是由有模型切换到无模型的
                 logger.info("Clean model cache")
@@ -97,7 +112,21 @@ class VC:
                 del self.net_g, self.cpt
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            return {"visible": False, "__type__": "update"}
+            return (
+                {"visible": False, "__type__": "update"},
+                {
+                    "visible": True,
+                    "value": to_return_protect0,
+                    "__type__": "update",
+                },
+                {
+                    "visible": True,
+                    "value": to_return_protect1,
+                    "__type__": "update",
+                },
+                "",
+                "",
+            )
         #person = f'{os.getenv("weight_root")}/{sid}'
         person = f'{sid}'
         #logger.info(f"Loading: {person}")
@@ -133,7 +162,16 @@ class VC:
         index = {"value": get_index_path_from_model(sid), "__type__": "update"}
         logger.info("Select index: " + index["value"])
 
-
+        return (
+            (
+                {"visible": False, "maximum": n_spk, "__type__": "update"},
+                to_return_protect0,
+                to_return_protect1
+            )
+            if to_return_protect
+            else {"visible": False, "maximum": n_spk, "__type__": "update"}
+        )
+    
 
     def vc_single(
         self,
@@ -150,7 +188,6 @@ class VC:
         rms_mix_rate,
         protect,
         crepe_hop_length,
-        output_path,
         f0_min,
         note_min,
         f0_max,
@@ -258,17 +295,163 @@ class VC:
             )
             end_time = time.time()
             total_time = end_time - start_time
-            print(
+
+            output_folder = "assets/audios/audio-outputs"
+            os.makedirs(output_folder, exist_ok=True)  
+            output_filename = "generated_audio_{}.wav"
+            output_count = 1
+            while True:
+                current_output_path = os.path.join(output_folder, output_filename.format(output_count))
+                if not os.path.exists(current_output_path):
+                    break
+                output_count += 1
+            
+            wavfile.write(current_output_path, self.tgt_sr, audio_opt)
+            print(f"Generated audio saved to: {current_output_path}")
+            
+            return (
                 "Success.\n%s\nTime:\nnpy: %.2fs, f0: %.2fs, infer: %.2fs."
                 % (index_info, *times),
                 (tgt_sr, audio_opt),
             )
-            if output_path is not None:
-                sf.write(output_path, audio_opt, tgt_sr, format='WAV')
-            return "Correcto", (tgt_sr, audio_opt)
         except:
             info = traceback.format_exc()
-            print(info)
+            logger.warn(info)
+            return info, (None, None)
+
+    def vc_single_dont_save(
+        self,
+        sid,
+        input_audio_path0,
+        input_audio_path1,
+        f0_up_key,
+        f0_file,
+        f0_method,
+        file_index,
+        file_index2,
+        index_rate,
+        filter_radius,
+        resample_sr,
+        rms_mix_rate,
+        protect,
+        crepe_hop_length,
+        f0_min,
+        note_min,
+        f0_max,
+        note_max,
+        f0_autotune,
+    ):
+        global total_time
+        total_time = 0
+        start_time = time.time()
+        if not input_audio_path0 and not input_audio_path1:
+            return "You need to upload an audio", None
+        
+        if (not os.path.exists(input_audio_path0)) and (not os.path.exists(os.path.join(now_dir, input_audio_path0))):
+            return "Audio was not properly selected or doesn't exist", None
+        
+        input_audio_path1 = input_audio_path1 or input_audio_path0
+        print(f"\nStarting inference for '{os.path.basename(input_audio_path1)}'")
+        print("-------------------")
+        f0_up_key = int(f0_up_key)
+        if rvc_globals.NotesOrHertz and f0_method != 'rmvpe':
+            f0_min = note_to_hz(note_min) if note_min else 50
+            f0_max = note_to_hz(note_max) if note_max else 1100
+            print(f"Converted Min pitch: freq - {f0_min}\n"
+                  f"Converted Max pitch: freq - {f0_max}")
+        else:
+            f0_min = f0_min or 50
+            f0_max = f0_max or 1100
+        try:
+            input_audio_path1 = input_audio_path1 or input_audio_path0
+            print(f"Attempting to load {input_audio_path1}....")
+            audio = load_audio(file=input_audio_path1,
+                               sr=16000,
+                               DoFormant=rvc_globals.DoFormant,
+                               Quefrency=rvc_globals.Quefrency,
+                               Timbre=rvc_globals.Timbre)
+            
+            audio_max = np.abs(audio).max() / 0.95
+            if audio_max > 1:
+                audio /= audio_max
+            times = [0, 0, 0]
+
+            if self.hubert_model is None:
+                self.hubert_model = load_hubert(self.config)
+
+            try:
+                self.if_f0 = self.cpt.get("f0", 1)
+            except NameError:
+                message = "Model was not properly selected"
+                print(message)
+                return message, None
+            
+            file_index = (
+                (
+                    file_index.strip(" ")
+                    .strip('"')
+                    .strip("\n")
+                    .strip('"')
+                    .strip(" ")
+                    .replace("trained", "added")
+                )
+                if file_index != ""
+                else file_index2
+            )  # 防止小白写错，自动帮他替换掉
+
+            try:
+                audio_opt = self.pipeline.pipeline(
+                    self.hubert_model,
+                    self.net_g,
+                    sid,
+                    audio,
+                    input_audio_path1,
+                    times,
+                    f0_up_key,
+                    f0_method,
+                    file_index,
+                    index_rate,
+                    self.if_f0,
+                    filter_radius,
+                    self.tgt_sr,
+                    resample_sr,
+                    rms_mix_rate,
+                    self.version,
+                    protect,
+                    crepe_hop_length,
+                    f0_autotune,
+                    f0_file=f0_file,
+                    f0_min=f0_min,
+                    f0_max=f0_max
+                    )
+            except AssertionError:
+                message = "Mismatching index version detected (v1 with v2, or v2 with v1)."
+                print(message)
+                return message, None
+            except NameError:
+                message = "RVC libraries are still loading. Please try again in a few seconds."
+                print(message)
+                return message, None
+
+            if self.tgt_sr != resample_sr >= 16000:
+                tgt_sr = resample_sr
+            else:
+                tgt_sr = self.tgt_sr
+            index_info = (
+                "Index:\n%s." % file_index
+                if os.path.exists(file_index)
+                else "Index not used."
+            )
+            end_time = time.time()
+            total_time = end_time - start_time
+            return (
+                "Success.\n%s\nTime:\nnpy: %.2fs, f0: %.2fs, infer: %.2fs."
+                % (index_info, *times),
+                (tgt_sr, audio_opt),
+            )
+        except:
+            info = traceback.format_exc()
+            logger.warn(info)
             return info, (None, None)
 
 

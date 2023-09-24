@@ -68,7 +68,7 @@ class App(ctk.CTk):
         self.model_loaded = False
         
         self.logo = ctk.CTkImage(Image.open("assets/images/icon.png"), size=(40, 40))
-        self.image_button = ctk.CTkButton(master=self, text="Applio Rvc Fork EASY GUI", image=self.logo)
+        self.image_button = ctk.CTkButton(master=self, text="", image=self.logo)
         self.image_button.pack()
         
         self.master_frame = ctk.CTkFrame(master=self, height=self.winfo_height() - 20, width=self.winfo_width() - 20)
@@ -77,13 +77,14 @@ class App(ctk.CTk):
         # Inicializar el widget de estado
         self.result_state = ctk.CTkLabel(self, text="", height=50, width=400, corner_radius=10)
 
+
         self.container = ctk.CTkFrame(master=self.master_frame, width=250)
         
         self.inputpath_frame = ctk.CTkFrame(master=self.container)
         self.input_audio_label = ctk.CTkLabel(self.inputpath_frame, text="Selecciona tu acapella:")
         self.input_audio_entry = ctk.CTkEntry(self.inputpath_frame)
         self.browse_button = ctk.CTkButton(self.inputpath_frame, text="Buscar", command=self.browse_file, 
-                                           fg_color="#ffffff", text_color="#018ada",
+                                           fg_color="#709839", text_color="#000",
                                            hover_color="#ffffff"
                                            )
         
@@ -101,7 +102,7 @@ class App(ctk.CTk):
         
         self.model_list = ctk.CTkOptionMenu(self.select_model_frame, values=self.model_folders,
                                command=self.selected_model,
-                               variable=self.select_model, fg_color="#ffffff", text_color="#018ada"
+                               variable=self.select_model, fg_color="green", text_color="#000"
         )
         
         self.file_index_entry = ctk.CTkEntry(self.container, width=250)       
@@ -118,10 +119,10 @@ class App(ctk.CTk):
         #["pm", "harvest", "dio", "crepe", "crepe-tiny", "mangio-crepe", "mangio-crepe-tiny"]
         self.f0_method_entry = ctk.CTkSegmentedButton(
             self.pitch_frame, height=40, 
-            values=["dio", "pm","harvest", "crepe", "crepe-tiny", "mangio-crepe" , "mangio-crepe-tiny", "rmvpe"], 
+            values=["rmvpe"], 
             command=self.crepe_hop_length_slider_visibility
         )
-        self.f0_method_entry.set("dio")
+        self.f0_method_entry.set("rmvpe")
         
         self.f0_pitch_label = ctk.CTkLabel(self.pitch_frame, text="Tono: 0")
         self.f0_pitch_entry = ctk.CTkSlider(self.pitch_frame, from_=-20, to=20, number_of_steps=100, command=self.pitch_slider_event, )
@@ -144,13 +145,13 @@ class App(ctk.CTk):
         
         # intiilizing import models button widget
         self.import_moodels_button = ctk.CTkButton(
-            self.select_model_frame, fg_color="#ffffff", 
-            text_color="#018ada",
+            self.select_model_frame, fg_color="#709839", 
+            text_color="#000",
             hover_color="#ffffff", corner_radius=5, text="Importar modelo desde .zip", command=self.browse_zip)
         
         # intiilizing run button widget
         self.run_button = ctk.CTkButton(
-            self.buttons_container, fg_color="green", hover_color="darkgreen", text="Convertir", command=self.start_processing)
+            self.buttons_container, fg_color="#709839", hover_color="darkgreen", text="Convertir", command=self.start_processing)
                 
         # intiilizing last output label & open output button widget
         self.last_output_label = ctk.CTkLabel(self.output_audio_frame, text="Ruta de salida: ")
@@ -177,7 +178,7 @@ class App(ctk.CTk):
         else:
             self.change_device.set("GPU")
             
-        self.open_file_explorer_button = ctk.CTkButton(self.buttons_container, text="Abrir folder", command=self.open_file_explorer)
+        self.open_file_explorer_button = ctk.CTkButton(self.buttons_container, text="Abrir carpeta de salida", command=self.open_file_explorer)
         
         # Mostrar contenedor principal
         self.master_frame.pack(padx=5, pady=5)
@@ -465,11 +466,17 @@ class App(ctk.CTk):
   #  print(value)
   
 app = App()
-app.title("RVC - Uso Local - Applio Rvc Fork")
+app.title("RVC - Uso Local - Applio RVC Fork")
 
 width = 800
 height = 800
 screen_height = app.winfo_screenheight()
 app.geometry(f"{int(width)}x{int(height)}")
+
+footer_text = "Hecho con <3 pa los illojuaners"
+
+# Crea una etiqueta para el pie de página y empaquétala en la ventana de la aplicación
+footer_label = ctk.CTkLabel(app, text=footer_text, text_color="gray")
+footer_label.pack(side="bottom", padx=10, pady=10)
 
 app.mainloop()

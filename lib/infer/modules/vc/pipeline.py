@@ -16,9 +16,6 @@ import pyworld
 import torch.nn.functional as F
 from scipy import signal
 from tqdm import tqdm
-from dotenv import load_dotenv
-
-load_dotenv()
 
 import random
 now_dir = os.getcwd()
